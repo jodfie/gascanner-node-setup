@@ -210,16 +210,32 @@ get_sdr_info() {
     print_info "SDR Type: $SDR_TYPE, Count: $SDR_COUNT"
 }
 
-get_uptime_kuma_token() {
+get_uptime_kuma_tokens() {
     echo ""
     echo -e "${YELLOW}Uptime Kuma Monitoring (Required)${NC}"
-    echo "Enter the Uptime Kuma push token for this node."
-    echo "Get this from the GAScanner admin - they will create a push monitor for you."
+    echo "The GAScanner admin needs to create 3 push monitors for this node:"
+    echo "  1) Node System    - Monitors if the node is online"
+    echo "  2) TR Container   - Monitors if trunk-recorder is running"
+    echo "  3) Transmissions  - Monitors if audio is being decoded"
     echo ""
-    read -p "Push Token: " KUMA_TOKEN
+    echo "Get these tokens from the admin before continuing."
+    echo ""
 
-    if [[ -z "$KUMA_TOKEN" ]]; then
-        print_error "Uptime Kuma push token is required for monitoring"
+    read -p "Node System Push Token: " KUMA_TOKEN_SYSTEM
+    if [[ -z "$KUMA_TOKEN_SYSTEM" ]]; then
+        print_error "Node System push token is required"
+        exit 1
+    fi
+
+    read -p "TR Container Push Token: " KUMA_TOKEN_CONTAINER
+    if [[ -z "$KUMA_TOKEN_CONTAINER" ]]; then
+        print_error "TR Container push token is required"
+        exit 1
+    fi
+
+    read -p "Transmissions Push Token: " KUMA_TOKEN_TRANSMISSIONS
+    if [[ -z "$KUMA_TOKEN_TRANSMISSIONS" ]]; then
+        print_error "Transmissions push token is required"
         exit 1
     fi
 }
@@ -429,41 +445,82 @@ EOF
 }
 
 setup_monitoring() {
-    print_step "Setting up Uptime Kuma heartbeat..."
+    print_step "Setting up Uptime Kuma monitoring..."
 
-    # Create heartbeat script
+    TR_DIR="/home/${SUDO_USER:-root}/trunk_recorder"
+
+    # Create comprehensive heartbeat script
     local heartbeat_script="/usr/local/bin/gascanner-heartbeat.sh"
 
-    cat > "$heartbeat_script" << EOF
+    cat > "$heartbeat_script" << 'HEARTBEAT_EOF'
 #!/bin/bash
-# GAScanner Node Heartbeat
-# Sends status to Uptime Kuma every run
+# GAScanner Node Heartbeat Script
+# Monitors: System, TR Container, and Transmission Activity
 
-# Check if trunk-recorder container is running
-if docker ps --format '{{.Names}}' | grep -q trunk_recorder; then
-    STATUS="up"
-    MSG="trunk-recorder running"
+UPTIME_KUMA_HOST="PLACEHOLDER_HOST"
+TOKEN_SYSTEM="PLACEHOLDER_SYSTEM"
+TOKEN_CONTAINER="PLACEHOLDER_CONTAINER"
+TOKEN_TRANSMISSIONS="PLACEHOLDER_TRANSMISSIONS"
+TR_AUDIO_DIR="PLACEHOLDER_TR_DIR/tr_audio"
+
+# Function to send heartbeat
+send_heartbeat() {
+    local token="$1"
+    local status="$2"
+    local msg="$3"
+    curl -s "https://${UPTIME_KUMA_HOST}/api/push/${token}?status=${status}&msg=${msg}" > /dev/null 2>&1
+}
+
+# Monitor 1: System Online (always up if this script runs)
+send_heartbeat "$TOKEN_SYSTEM" "up" "System%20online"
+
+# Monitor 2: TR Container Running
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q trunk_recorder; then
+    send_heartbeat "$TOKEN_CONTAINER" "up" "Container%20running"
 else
-    STATUS="down"
-    MSG="trunk-recorder not running"
+    send_heartbeat "$TOKEN_CONTAINER" "down" "Container%20stopped"
 fi
 
-curl -s "https://${UPTIME_KUMA_HOST}/api/push/${KUMA_TOKEN}?status=\${STATUS}&msg=\${MSG}" > /dev/null 2>&1
-EOF
+# Monitor 3: Transmission Activity (check for recent audio files in last 5 minutes)
+if [[ -d "$TR_AUDIO_DIR" ]]; then
+    RECENT_FILES=$(find "$TR_AUDIO_DIR" -type f -name "*.wav" -mmin -5 2>/dev/null | wc -l)
+    if [[ "$RECENT_FILES" -gt 0 ]]; then
+        send_heartbeat "$TOKEN_TRANSMISSIONS" "up" "${RECENT_FILES}%20transmissions%20(5min)"
+    else
+        # Check TR logs for recent call activity as backup
+        if docker logs trunk_recorder --since 5m 2>&1 | grep -q "Call"; then
+            send_heartbeat "$TOKEN_TRANSMISSIONS" "up" "Calls%20detected%20in%20logs"
+        else
+            send_heartbeat "$TOKEN_TRANSMISSIONS" "down" "No%20recent%20transmissions"
+        fi
+    fi
+else
+    send_heartbeat "$TOKEN_TRANSMISSIONS" "down" "Audio%20dir%20missing"
+fi
+HEARTBEAT_EOF
+
+    # Replace placeholders with actual values
+    sed -i "s|PLACEHOLDER_HOST|${UPTIME_KUMA_HOST}|g" "$heartbeat_script"
+    sed -i "s|PLACEHOLDER_SYSTEM|${KUMA_TOKEN_SYSTEM}|g" "$heartbeat_script"
+    sed -i "s|PLACEHOLDER_CONTAINER|${KUMA_TOKEN_CONTAINER}|g" "$heartbeat_script"
+    sed -i "s|PLACEHOLDER_TRANSMISSIONS|${KUMA_TOKEN_TRANSMISSIONS}|g" "$heartbeat_script"
+    sed -i "s|PLACEHOLDER_TR_DIR|${TR_DIR}|g" "$heartbeat_script"
 
     chmod +x "$heartbeat_script"
 
     # Add cron job for heartbeat (every minute)
     local cron_entry="* * * * * $heartbeat_script"
 
-    # Install cron job
+    # Install cron job (remove old entries first)
     (crontab -l 2>/dev/null | grep -v gascanner-heartbeat; echo "$cron_entry") | crontab -
 
     # Run initial heartbeat
     $heartbeat_script
 
-    print_info "Heartbeat monitoring configured"
-    print_info "Sending to: https://${UPTIME_KUMA_HOST}/api/push/${KUMA_TOKEN}"
+    print_info "Monitoring configured with 3 monitors:"
+    print_info "  - System:        https://${UPTIME_KUMA_HOST}/api/push/${KUMA_TOKEN_SYSTEM:0:8}..."
+    print_info "  - Container:     https://${UPTIME_KUMA_HOST}/api/push/${KUMA_TOKEN_CONTAINER:0:8}..."
+    print_info "  - Transmissions: https://${UPTIME_KUMA_HOST}/api/push/${KUMA_TOKEN_TRANSMISSIONS:0:8}..."
 }
 
 set_hostname() {
@@ -525,9 +582,11 @@ print_summary() {
     echo "  Control Channels: $CONTROL_CHANNELS"
     echo "  RadioRef SID:     $RR_SYSTEM_ID"
     echo ""
-    echo -e "${YELLOW}Monitoring:${NC}"
+    echo -e "${YELLOW}Monitoring (3 Push Monitors):${NC}"
     echo "  Uptime Kuma:      https://${UPTIME_KUMA_HOST}"
-    echo "  Push Token:       ${KUMA_TOKEN:0:8}..."
+    echo "  System Token:     ${KUMA_TOKEN_SYSTEM:0:8}..."
+    echo "  Container Token:  ${KUMA_TOKEN_CONTAINER:0:8}..."
+    echo "  TX Activity:      ${KUMA_TOKEN_TRANSMISSIONS:0:8}..."
     echo "  Heartbeat:        Every minute via cron"
     echo ""
     echo -e "${YELLOW}Next Steps:${NC}"
@@ -564,7 +623,7 @@ main() {
     fetch_control_channels
     get_mqtt_credentials
     get_sdr_info
-    get_uptime_kuma_token
+    get_uptime_kuma_tokens
     get_hostname
 
     # Confirm
