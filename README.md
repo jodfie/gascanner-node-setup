@@ -10,20 +10,40 @@ Automated setup for GAScanner trunk-recorder nodes. This repo helps you configur
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │              Trunk-Recorder                               │   │
 │  │  • SDR hardware (RTL-SDR, Airspy, etc.)                  │   │
-│  │  • MQTT plugin → sends audio to GAScanner VPS            │   │
+│  │  • MQTT plugin → sends audio & metrics to VPS            │   │
+│  │  • Uptime Kuma heartbeats (3 monitors required)          │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                               │
-                              │ MQTT (audio + metadata)
+                              │ MQTT (audio + metadata + metrics)
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    GAScanner VPS                                 │
-│  • iCAD processing (compression, tone detection)                 │
-│  • RDIO Scanner (radio.georgiascanner.live)                     │
-│  • Trunk Player (scan.georgiascanner.live)                      │
-│  • OpenMHZ, Elasticsearch, Audio Archive                        │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Data Pipeline                                             │  │
+│  │  • iCAD processing (compression, tone detection)           │  │
+│  │  • Telegraf → InfluxDB (metrics collection)                │  │
+│  │  • Elasticsearch (call indexing & search)                  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Web Services                                              │  │
+│  │  • RDIO Scanner    → radio.georgiascanner.live            │  │
+│  │  • Grafana Stats   → stats.georgiascanner.live            │  │
+│  │  • Uptime Kuma     → uptime.georgiascanner.live           │  │
+│  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## Monitoring & Dashboards
+
+All node metrics are available at **https://stats.georgiascanner.live**:
+
+- **System Overview** - Total transmissions, active nodes, call distribution
+- **Node Performance** - Per-node transmission rates, recorder status, call duration
+- **Talkgroup Analytics** - Top talkgroups, activity heatmaps, group breakdowns
+- **Uptime Kuma Monitors** - Node health, response times, uptime percentages
+
+Each node sends metrics via MQTT which are collected by Telegraf and stored in InfluxDB for visualization.
 
 ## Supported Counties (SEGARRN)
 
@@ -55,7 +75,7 @@ All counties are part of the [Southeast Georgia Regional Radio Network (SEGARRN)
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/gascanner-node-setup.git
+git clone https://github.com/jodfie/gascanner-node-setup.git
 cd gascanner-node-setup
 
 # Run interactive setup
@@ -68,7 +88,7 @@ If you have Claude Code installed:
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/gascanner-node-setup.git
+git clone https://github.com/jodfie/gascanner-node-setup.git
 cd gascanner-node-setup
 
 # Run Claude Code and ask it to set up the node
@@ -93,18 +113,21 @@ claude
 ### Required Information
 
 You'll need to provide:
-- **County name** (chatham, bryan, effingham, bulloch)
+- **County name** - One of the 10 SEGARRN counties
 - **RadioReference System ID** - The script will fetch control channels automatically
 - **MQTT credentials** (username/password from admin)
 - **SDR device info** (type, serial number if multiple)
-- **Uptime Kuma push token** (required for monitoring)
+- **3 Uptime Kuma push tokens** (required for monitoring):
+  1. **Node System Monitor** - Reports node health every minute
+  2. **TR Container Monitor** - Reports trunk-recorder container status
+  3. **Transmissions Monitor** - Reports transmission activity (alerts if no audio in 30min)
 
 ### Files from Admin
 
 Request these from the GAScanner admin:
 - **talkgroups.csv** - Talkgroup definitions for your county
 - **MQTT credentials** - Username and password for broker connection
-- **Uptime Kuma push token** - For monitoring heartbeat (required)
+- **3 Uptime Kuma push tokens** - Create 3 push monitors at uptime.georgiascanner.live
 
 ### Configuration Files
 
