@@ -25,14 +25,22 @@ Automated setup for GAScanner trunk-recorder nodes. This repo helps you configur
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Supported Counties
+## Supported Counties (SEGARRN)
 
-| County | System ID | Short Name | Status |
-|--------|-----------|------------|--------|
-| Chatham | chatham | chatham | Active |
-| Bryan | bryan | bryan | Ready |
-| Effingham | effingham | effingham | Ready |
-| Bulloch | bulloch | bulloch | Ready |
+All counties are part of the [Southeast Georgia Regional Radio Network (SEGARRN)](https://www.radioreference.com/db/sid/6694) P25 system.
+
+| County | Short Name | Major City | Status |
+|--------|------------|------------|--------|
+| Chatham | chatham | Savannah | Active |
+| Bryan | bryan | Richmond Hill | Ready |
+| Bulloch | bulloch | Statesboro | Ready |
+| Candler | candler | Metter | Ready |
+| Effingham | effingham | Springfield | Ready |
+| Emanuel | emanuel | Swainsboro | Ready |
+| Glynn | glynn | Brunswick | Ready |
+| Liberty | liberty | Hinesville | Ready |
+| Long | long | Ludowici | Ready |
+| McIntosh | mcintosh | Darien | Ready |
 
 ## Prerequisites
 

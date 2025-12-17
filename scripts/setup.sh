@@ -57,19 +57,31 @@ check_root() {
 
 get_county() {
     echo ""
-    echo -e "${YELLOW}Available Counties:${NC}"
-    echo "  1) chatham    - Chatham County"
+    echo -e "${YELLOW}Available SEGARRN Counties:${NC}"
+    echo "  1) chatham    - Chatham County (Savannah)"
     echo "  2) bryan      - Bryan County"
-    echo "  3) effingham  - Effingham County"
-    echo "  4) bulloch    - Bulloch County"
+    echo "  3) bulloch    - Bulloch County (Statesboro)"
+    echo "  4) candler    - Candler County"
+    echo "  5) effingham  - Effingham County"
+    echo "  6) emanuel    - Emanuel County"
+    echo "  7) glynn      - Glynn County (Brunswick)"
+    echo "  8) liberty    - Liberty County (Hinesville)"
+    echo "  9) long       - Long County"
+    echo " 10) mcintosh   - McIntosh County"
     echo ""
-    read -p "Select county (1-4): " county_choice
+    read -p "Select county (1-10): " county_choice
 
     case $county_choice in
         1) COUNTY="chatham" ;;
         2) COUNTY="bryan" ;;
-        3) COUNTY="effingham" ;;
-        4) COUNTY="bulloch" ;;
+        3) COUNTY="bulloch" ;;
+        4) COUNTY="candler" ;;
+        5) COUNTY="effingham" ;;
+        6) COUNTY="emanuel" ;;
+        7) COUNTY="glynn" ;;
+        8) COUNTY="liberty" ;;
+        9) COUNTY="long" ;;
+        10) COUNTY="mcintosh" ;;
         *)
             print_error "Invalid selection"
             exit 1
