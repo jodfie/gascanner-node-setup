@@ -1,0 +1,31 @@
+# Secrets - DO NOT COMMIT
+*.csv
+talkgroups.csv
+units.csv
+.env
+*.env
+credentials.txt
+
+# Audio files
+*.wav
+*.mp3
+*.m4a
+
+# Logs
+*.log
+tr_logs/
+tr_audio/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.bak

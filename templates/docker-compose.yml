@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  trunk-recorder:
+    image: thegreatcodeholio/trunk-recorder-mqtt:RC5.0_organized
+    container_name: trunk_recorder
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - ./tr_config:/app/tr_config:ro
+      - ./tr_audio:/app/tr_audio
+      - ./tr_logs:/app/tr_logs
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/shm:/dev/shm
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      - TZ=America/New_York
+    # Uncomment for debugging
+    # command: ["--config", "/app/tr_config/config.json", "-v"]
