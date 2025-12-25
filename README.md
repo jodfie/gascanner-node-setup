@@ -27,7 +27,8 @@ Automated setup for GAScanner trunk-recorder nodes. This repo helps you configur
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Web Services                                              │  │
-│  │  • RDIO Scanner    → radio.georgiascanner.live            │  │
+│  │  • ThinLineRadio   → thinline.georgiascanner.live         │  │
+│  │  • RDIO Scanner    → scanner.georgiascanner.live          │  │
 │  │  • Grafana Stats   → stats.georgiascanner.live            │  │
 │  │  • Uptime Kuma     → uptime.georgiascanner.live           │  │
 │  └───────────────────────────────────────────────────────────┘  │
