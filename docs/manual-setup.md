@@ -105,7 +105,7 @@ version: "3.8"
 
 services:
   trunk-recorder:
-    image: robotastic/trunk-recorder:latest
+    image: thegreatcodeholio/trunk-recorder-mqtt:RC5.0_organized
     container_name: trunk_recorder
     restart: unless-stopped
     privileged: true
@@ -162,7 +162,7 @@ cat > tr_config/config.json << 'EOF'
     {
       "name": "MQTT Status",
       "library": "/usr/local/lib/trunk-recorder/libmqtt_status_plugin.so",
-      "broker": "tcp://mqtt.georgiascanner.live:1883",
+      "broker": "tcp://VPS_IP_OR_HOSTNAME:1883",
       "topic": "trunk_recorder/feeds",
       "unit_topic": "trunk_recorder/units",
       "username": "YOUR_MQTT_USER",
@@ -183,8 +183,11 @@ EOF
 
 **Important**: Replace:
 - `YOUR_COUNTY` with your county name (e.g., chatham, bryan)
+- `VPS_IP_OR_HOSTNAME` with the VPS IP address or hostname provided by the admin (the Mosquitto broker runs on port 1883 with authentication required)
 - `YOUR_MQTT_USER` and `YOUR_MQTT_PASSWORD` with credentials from admin
 - Control channel frequencies with correct values for your area
+
+**ThinLine Radio HTTP upload (optional)**: In addition to MQTT, ThinLine Radio accepts direct HTTP uploads via `POST /api/call-upload`. Add an `uploadScript` to your systems block pointing to a shell script that posts audio + metadata. Contact the admin for the API key. MQTT is the primary and recommended transport.
 
 ## Step 8: Add Talkgroups File
 
@@ -253,8 +256,11 @@ sudo systemctl start trunk-recorder
 
 1. Check trunk-recorder logs: `docker logs trunk_recorder`
 2. Verify control channel frequencies are correct
-3. Check MQTT connectivity with mosquitto_pub test
+3. Check MQTT connectivity with mosquitto_pub test (see README)
 4. Verify credentials with admin
+5. Check [ThinLine Radio](https://thinline.georgiascanner.live) for recent calls from your county
+6. Check [TR Dashboard](https://trdash.georgiascanner.live) for real-time call activity and any ingest errors
+7. Confirm Uptime Kuma heartbeat monitors are checking in at [uptime.georgiascanner.live](https://uptime.georgiascanner.live)
 
 ### Docker Permission Denied
 

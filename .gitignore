@@ -29,3 +29,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# Local audit scripts (keep off remote)
+scripts/audit/

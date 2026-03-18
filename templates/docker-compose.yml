@@ -18,3 +18,24 @@ services:
       - TZ=America/New_York
     # Uncomment for debugging
     # command: ["--config", "/app/tr_config/config.json", "-v"]
+
+# NOTE: ThinLine Radio upload via HTTP
+# In addition to MQTT, ThinLine Radio accepts direct HTTP audio uploads.
+# To enable this, add an uploadScript in your config.json systems block:
+#
+#   "uploadScript": "/app/tr_config/upload.sh"
+#
+# And create tr_config/upload.sh:
+#
+#   #!/bin/bash
+#   # Upload call audio to ThinLine Radio via HTTP API
+#   # Usage: upload.sh <json_file> <audio_file>
+#   JSON_FILE="$1"
+#   AUDIO_FILE="$2"
+#   curl -s -X POST https://thinline.georgiascanner.live/api/call-upload \
+#     -F "audio=@${AUDIO_FILE}" \
+#     -F "meta=@${JSON_FILE}" \
+#     -H "Authorization: Bearer YOUR_API_KEY"
+#
+# Contact the GAScanner admin for the API key.
+# MQTT remains the primary/recommended transport for audio and metadata.
