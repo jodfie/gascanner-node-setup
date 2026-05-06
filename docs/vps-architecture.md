@@ -1,111 +1,154 @@
 # VPS Architecture Reference
 
-This document describes the current GAScanner VPS stack for reference when adding nodes, troubleshooting, or onboarding new contributors.
+This is the current GaScanner VPS reference for node operators and maintainers. The bootstrap repo uses this document to describe the system that remote trunk-recorder nodes feed; it is not the deployment source for the application containers.
 
-## Services Overview
+## Server Identity
 
-The VPS runs 14 containers plus a bare-metal Mosquitto MQTT broker.
+| Item | Value |
+|------|-------|
+| Hostname | `mqtt.georgiascanner.live` |
+| Public IPv4 | `209.145.49.25` |
+| Time zone | `America/New_York` |
+| Primary node ingest | MQTT on TCP `1883` |
 
-| Service | Container | Subdomain | Backend |
-|---------|-----------|-----------|---------|
-| ThinLine Radio | thinline | thinline.georgiascanner.live | PostgreSQL |
-| TR Engine | tr-engine | — (internal) | PostgreSQL + MQTT |
-| TR Dashboard | tr-dashboard | trdash.georgiascanner.live | PostgreSQL + MQTT |
-| RDIO Scanner | rdio-scanner | scanner.georgiascanner.live | MariaDB |
-| Traefik | traefik | — (ports 80/443) | — |
-| Cloudflared | cloudflared | — (Cloudflare tunnel) | — |
-| Uptime Kuma | uptime-kuma | uptime.georgiascanner.live | — |
-| AutoKuma | autokuma | — (internal) | — |
-| Dashy | dashy | home.georgiascanner.live | — |
-| Dozzle | dozzle | — (internal) | — |
-| Mosquitto | bare metal | — (port 1883) | — |
+## Live Service Inventory
 
-## Reverse Proxy: Traefik + Cloudflare Tunnel
+Verified on the server on 2026-05-05.
 
-All public HTTPS traffic is handled by Traefik (reverse proxy) running on ports 80 and 443, paired with a standalone Cloudflared container that maintains a persistent Cloudflare tunnel (tunnel ID: `230f663c-4c10-46a3-bfd7-267629d2777b`).
+| Service | Container / process | Access | Purpose |
+|---------|---------------------|--------|---------|
+| Mosquitto | bare metal systemd service | `mqtt.georgiascanner.live:1883` | MQTT broker for trunk-recorder nodes |
+| Traefik | `traefik` | `80`, `443`, `traefik.georgiascanner.live` | Reverse proxy and TLS |
+| Cloudflared | `cloudflared` | internal tunnel | Cloudflare Tunnel into Traefik |
+| ThinLine Radio | `thinline-radio` | `thinline.georgiascanner.live`, local `25915` | Primary scanner playback and user-facing radio UI |
+| ThinLine PostgreSQL | `thinline-radio-db` | Docker networks only | ThinLine database |
+| TG Manager | `tg-dashboard` | `tgmanager.georgiascanner.live`, local `25916` | ThinLine talkgroup management UI |
+| tr-engine | `tr-engine` | `trengine.georgiascanner.live`, local `8070` | Analytics API, MQTT consumer, audio API |
+| tr-engine PostgreSQL | `tr-engine-db` | Docker networks only | tr-engine database |
+| tr-dashboard | `tr-dashboard` | `trdash.georgiascanner.live` | Monitoring dashboard backed by tr-engine |
+| RDIO Scanner | `rdio-scanner` | `scanner.georgiascanner.live`, local `25913` | Legacy/compatibility scanner service |
+| RDIO MariaDB | `rdio-scanner-db` | Docker network only | RDIO database |
+| Uptime Kuma | `uptimekuma` | `uptime.georgiascanner.live`, local `3001` | Health monitoring |
+| AutoKuma | `autokuma` | internal | Creates Kuma monitors from Docker labels |
+| Dashy | `gascanner-dashboard` | `home.georgiascanner.live`, local `25914` | Service homepage |
+| Dozzle | `dozzle` | local `8080` / admin access | Docker logs |
+| Tailscale | bare metal systemd service | tailnet only | Admin access |
 
-The domain `georgiascanner.live` uses a wildcard certificate provisioned via Cloudflare DNS challenge. DNS records for subdomains are CNAME entries pointing to the Cloudflare tunnel.
+## Runtime Paths
 
-Traefik picks up routing configuration automatically from Docker labels on each container. No manual Traefik config file changes are needed for new services — just add the correct labels to the container.
+| Stack | Compose file | Notes |
+|-------|--------------|-------|
+| Traefik + Cloudflared | `/home/adminlocal/.docker/traefik/docker-compose.yml` | Traefik config is bind-mounted from `/home/adminlocal/.config/appdata/traefik/` |
+| Monitoring | `/home/adminlocal/.docker/compose/docker-compose.yml` | Uptime Kuma, AutoKuma, Dozzle |
+| ThinLine Radio | `/home/adminlocal/.docker/thinline-radio/docker-compose.yml` | Builds from `/home/adminlocal/ThinLineRadio` |
+| tr-engine + tr-dashboard | `/home/adminlocal/.docker/tr-engine/docker-compose.yml` | Builds from `/home/adminlocal/trunk-reporter/tr-engine` and `/home/adminlocal/trunk-reporter/tr-dashboard` |
+| RDIO Scanner | `/home/adminlocal/.docker/rdio-scanner-docker/docker-compose.yml` | Legacy/compatibility service |
+| Dashy | `/home/adminlocal/.docker/dashy/docker-compose.yml` | Dashboard config is under `/home/adminlocal/.config/dashy/` |
 
-### Adding a New Subdomain
+Persistent app data is stored under `/home/adminlocal/.config/appdata/` where practical. Legacy Docker volumes are still used by RDIO Scanner.
 
-1. Add Traefik labels to the new container in its `docker-compose.yml`:
+## Network Architecture
+
+```
+Internet
+  |
+  v
+Cloudflare DNS + Cloudflare Tunnel
+  |
+  v
+Traefik on compose_default
+  |
+  +-- thinline.georgiascanner.live  -> thinline-radio:3000
+  +-- tgmanager.georgiascanner.live -> tg-dashboard:80
+  +-- trengine.georgiascanner.live  -> tr-engine:8080
+  +-- trdash.georgiascanner.live    -> tr-dashboard:3000
+  |                                  -> /api, /audio, /health proxied to tr-engine:8080
+  +-- scanner.georgiascanner.live   -> rdio-scanner:3000
+  +-- uptime.georgiascanner.live    -> uptimekuma:3001
+  +-- home.georgiascanner.live      -> gascanner-dashboard:8080
+```
+
+Docker networks:
+
+| Network | Purpose |
+|---------|---------|
+| `compose_default` | Shared proxy/operations network used by Traefik and public services |
+| `tr-net` | tr-engine, tr-dashboard, and tr-engine PostgreSQL |
+| `thinline-net` | ThinLine Radio, TG Manager, and ThinLine PostgreSQL |
+| `rdio-scanner_network` | RDIO Scanner and MariaDB |
+
+## MQTT Data Flow
+
+```
+trunk-recorder node
+  publishes trunk_recorder/# over MQTT
+       |
+       v
+Mosquitto on mqtt.georgiascanner.live:1883
+       |
+       +-- ThinLine Radio subscribes for scanner playback/storage
+       |
+       +-- tr-engine subscribes for analytics, units, talkgroups, audio API
+```
+
+The broker is a bare-metal systemd service, not a Docker container. Docker services reach it through `host.docker.internal` from their compose files.
+
+Recommended trunk-recorder MQTT plugin topic roots:
+
+| Plugin field | Value |
+|--------------|-------|
+| `topic` | `trunk_recorder/feeds` |
+| `unit_topic` | `trunk_recorder/units` |
+| `message_topic` | omit unless trunking messages are needed |
+
+tr-engine currently subscribes to `trunk_recorder/#`.
+
+## Node Monitoring Contract
+
+Each node must have three Uptime Kuma push monitors:
+
+1. System online heartbeat
+2. trunk-recorder container heartbeat
+3. Transmission activity heartbeat
+
+The bootstrap script installs `/usr/local/bin/gascanner-heartbeat.sh` and runs it every minute through cron. Tokens are created in Uptime Kuma by the admin and entered during node setup.
+
+## Reverse Proxy Notes
+
+Traefik v3 handles public HTTPS routing with Cloudflare DNS challenge certificates. Public routes are added through Docker labels on the service containers.
+
+The tr-dashboard host has two routes:
+
+- `Host(trdash.georgiascanner.live)` with low priority serves the static dashboard.
+- `Host(trdash.georgiascanner.live) && (PathPrefix(/api) || PathPrefix(/audio) || PathPrefix(/health))` with higher priority proxies API/audio traffic to tr-engine.
+
+## Service Status Notes
+
+- ThinLine Radio and tr-engine are the primary current ingestion and user-facing path.
+- RDIO Scanner Docker is still running for compatibility and monitoring, but new nodes should not be documented as RDIO-first.
+- Legacy bare-metal RDIO is inactive.
+- Historical SWAG, iCAD, Grafana, Telegraf, InfluxDB, Elasticsearch, DIUN, Trunk-Player NG, and static-image nginx references should not be used for new node bootstrap docs unless explicitly restoring one of those services.
+
+## Adding A New Public Service
+
+1. Attach the service to `compose_default`.
+2. Add Traefik labels for host, entrypoint, TLS resolver, and service port.
+3. Add AutoKuma labels if it should be monitored.
+4. Add or verify the Cloudflare tunnel/DNS hostname.
+5. Restart the service and confirm through Uptime Kuma.
+
+Example labels:
 
 ```yaml
 labels:
-  - "traefik.enable=true"
-  - "traefik.http.routers.SERVICENAME.rule=Host(`SUBDOMAIN.georgiascanner.live`)"
-  - "traefik.http.routers.SERVICENAME.entrypoints=websecure"
-  - "traefik.http.routers.SERVICENAME.tls.certresolver=cloudflare"
-  - "traefik.http.services.SERVICENAME.loadbalancer.server.port=CONTAINER_PORT"
+  traefik.enable: "true"
+  traefik.http.routers.example.rule: "Host(`example.georgiascanner.live`)"
+  traefik.http.routers.example.entrypoints: "websecure"
+  traefik.http.routers.example.tls.certresolver: "cloudflare"
+  traefik.http.services.example.loadbalancer.server.port: "3000"
+  traefik.docker.network: "compose_default"
+  kuma.example.docker.name: "Example (Container)"
+  kuma.example.docker.dockerHost: "local"
+  kuma.example.docker.interval: "60"
+  kuma.example.docker.tag_name: "tag-infra"
 ```
-
-2. Add a DNS CNAME record in Cloudflare: `SUBDOMAIN.georgiascanner.live` → the tunnel hostname (e.g., `230f663c-4c10-46a3-bfd7-267629d2777b.cfargotunnel.com`). Set proxy status to proxied.
-
-3. Update the Cloudflare tunnel ingress config to route the new hostname to Traefik. The tunnel forwards all traffic to Traefik, so in most cases no tunnel config change is needed — Traefik handles routing from there.
-
-4. Restart the container. AutoKuma will automatically create an Uptime Kuma monitor if the container has the appropriate AutoKuma labels.
-
-## Mosquitto MQTT Broker
-
-Mosquitto runs on the VPS bare metal (not in Docker) and listens on port 1883 with authentication required.
-
-Config location: `/etc/mosquitto/`
-
-Key files:
-- `/etc/mosquitto/mosquitto.conf` - Main config (includes conf.d/)
-- `/etc/mosquitto/conf.d/` - Drop-in config files
-- `/etc/mosquitto/passwd` - Hashed password file (managed with `mosquitto_passwd`)
-
-To add a new MQTT user:
-```bash
-sudo mosquitto_passwd /etc/mosquitto/passwd NEW_USERNAME
-sudo systemctl reload mosquitto
-```
-
-Each trunk-recorder node authenticates with its own MQTT user (convention: `tr_COUNTY`).
-
-## Data Flow
-
-```
-Trunk-Recorder Node
-        │
-        │ MQTT publish (audio + metadata)
-        │ tcp://VPS_IP:1883  (auth required)
-        ▼
-Mosquitto MQTT Broker (bare metal)
-        │
-        ├─── ThinLine Radio subscribes
-        │         → stores audio, serves playback
-        │         → thinline.georgiascanner.live
-        │
-        └─── TR Engine subscribes
-                  → real-time call processing
-                  → talkgroup management
-                  → TR Dashboard (trdash.georgiascanner.live)
-```
-
-Audio and metadata originate from the trunk-recorder MQTT plugin. ThinLine Radio and TR Engine each subscribe to the relevant MQTT topics independently. There is no single ingest pipeline — both services consume from the broker directly.
-
-## Monitoring
-
-- **Uptime Kuma** ([uptime.georgiascanner.live](https://uptime.georgiascanner.live)) monitors node heartbeats and container health
-- **AutoKuma** reads Docker labels and automatically creates/updates Kuma monitors when containers start
-- **Dozzle** provides a Docker log viewer for all containers (internal access only)
-
-Node operators must configure 3 Uptime Kuma push monitors per node (system health, container status, transmission activity). Push tokens are provided by the admin.
-
-## Removed Services
-
-The following services have been decommissioned and are no longer part of the stack:
-
-- SWAG (replaced by Traefik + Cloudflare tunnel)
-- iCAD Dispatch + Elasticsearch
-- Grafana + Telegraf + InfluxDB
-- RDIO Scanner bare metal install
-- Trunk-Player NG
-- DIUN
-- Static image nginx
-
-Do not reference these in node setup documentation or troubleshooting guides.

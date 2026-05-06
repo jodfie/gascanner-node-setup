@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # GAScanner Node Setup Script
-# Sets up a bare Ubuntu server as a trunk-recorder node
+# Sets up a bare Ubuntu/Raspberry Pi host as a trunk-recorder node
+# that publishes MQTT to mqtt.georgiascanner.live.
 #
 
 set -e
@@ -260,6 +261,7 @@ install_dependencies() {
         jq \
         htop \
         tmux \
+        mosquitto-clients \
         usbutils \
         libusb-1.0-0-dev \
         cmake \
@@ -357,8 +359,6 @@ generate_docker_compose() {
     local compose_file="$1"
 
     cat > "$compose_file" << EOF
-version: "3.8"
-
 services:
   trunk-recorder:
     image: ${TR_IMAGE}
@@ -383,26 +383,39 @@ generate_tr_config() {
 
     print_step "Generating trunk-recorder configuration..."
 
+    # Keep the channels selected during the interactive flow. County defaults
+    # supply SDR defaults and short names, but should not overwrite operator input.
+    local selected_control_channels="${CONTROL_CHANNELS:-}"
+
     # Load county-specific settings if available
     if [[ -f "$REPO_DIR/configs/$COUNTY/system.conf" ]]; then
         source "$REPO_DIR/configs/$COUNTY/system.conf"
     fi
 
+    if [[ -n "$selected_control_channels" ]]; then
+        CONTROL_CHANNELS="$selected_control_channels"
+    fi
+
     # Use fetched control channels or default
     CONTROL_CHANNELS=${CONTROL_CHANNELS:-"[851000000]"}
     TALKGROUPS_FILE=${TALKGROUPS_FILE:-"/app/tr_config/talkgroups.csv"}
+    SHORT_NAME=${SHORT_NAME:-"$COUNTY"}
+    DEFAULT_CENTER_FREQ=${DEFAULT_CENTER_FREQ:-"851000000"}
+    DEFAULT_SAMPLE_RATE=${DEFAULT_SAMPLE_RATE:-"2400000"}
+    DEFAULT_GAIN=${DEFAULT_GAIN:-"40"}
+    DEFAULT_DIGITAL_RECORDERS=${DEFAULT_DIGITAL_RECORDERS:-"8"}
 
     cat > "$config_file" << EOF
 {
   "ver": 2,
-  "instanceId": "$COUNTY",
+  "instanceId": "$SHORT_NAME",
   "sources": [
     {
-      "center": 851000000,
-      "rate": 2400000,
+      "center": $DEFAULT_CENTER_FREQ,
+      "rate": $DEFAULT_SAMPLE_RATE,
       "error": 0,
-      "gain": 40,
-      "digitalRecorders": 8,
+      "gain": $DEFAULT_GAIN,
+      "digitalRecorders": $DEFAULT_DIGITAL_RECORDERS,
       "analogRecorders": 0,
       "driver": "$SDR_DRIVER",
       "device": "rtl=0"
@@ -413,7 +426,7 @@ generate_tr_config() {
       "control_channels": $CONTROL_CHANNELS,
       "type": "p25",
       "talkgroupsFile": "$TALKGROUPS_FILE",
-      "shortName": "$COUNTY",
+      "shortName": "$SHORT_NAME",
       "audioArchive": true,
       "uploadScript": ""
     }

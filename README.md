@@ -1,155 +1,132 @@
-# GAScanner Node Setup
+# GaScanner Node Bootstrap
 
-Automated setup for GAScanner trunk-recorder nodes. This repo helps you configure a bare Ubuntu server as a trunk-recorder node that feeds into the centralized GAScanner VPS infrastructure.
+Bootstrap tooling for GaScanner trunk-recorder nodes. This repo is the canonical node setup repo: it provisions a remote Ubuntu/Raspberry Pi scanner node, points it at the central GaScanner VPS, and documents the current VPS architecture that the node feeds.
 
-## Architecture Overview
+The application source checkouts (`tr-engine`, `tr-dashboard`, and `ThinLineRadio`) stay outside this repo. This repo keeps node bootstrap, node docs, and VPS reference material only.
+
+## Current Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   YOUR NEW NODE                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │              Trunk-Recorder                               │   │
-│  │  • SDR hardware (RTL-SDR, Airspy, etc.)                  │   │
-│  │  • MQTT plugin → sends audio & metrics to VPS            │   │
-│  │  • Uptime Kuma heartbeats (3 monitors required)          │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ MQTT (audio + metadata + metrics)
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    GAScanner VPS                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  Data Pipeline                                             │  │
-│  │  • iCAD processing (compression, tone detection)           │  │
-│  │  • Telegraf → InfluxDB (metrics collection)                │  │
-│  │  • Elasticsearch (call indexing & search)                  │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  Web Services                                              │  │
-│  │  • ThinLineRadio   → thinline.georgiascanner.live         │  │
-│  │  • RDIO Scanner    → scanner.georgiascanner.live          │  │
-│  │  • Grafana Stats   → stats.georgiascanner.live            │  │
-│  │  • Uptime Kuma     → uptime.georgiascanner.live           │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+Remote node
+  SDR hardware
+  trunk-recorder + MQTT plugin
+  Uptime Kuma push heartbeats
+       |
+       | MQTT audio, metadata, units, recorder stats
+       v
+GaScanner VPS: mqtt.georgiascanner.live
+  Bare-metal Mosquitto on TCP 1883
+       |
+       +--> ThinLine Radio + PostgreSQL
+       |    https://thinline.georgiascanner.live
+       |
+       +--> tr-engine + PostgreSQL
+            https://trengine.georgiascanner.live
+            https://trdash.georgiascanner.live via tr-dashboard
+
+Ingress and operations:
+  Traefik v3 + Cloudflare Tunnel
+  Uptime Kuma + AutoKuma
+  Dashy homepage
+  Dozzle over admin access
+  Tailscale for administration
 ```
 
-## Monitoring & Dashboards
+### Live VPS Services
 
-All node metrics are available at **https://stats.georgiascanner.live**:
+| Service | Access | Role |
+|---------|--------|------|
+| Mosquitto | `mqtt.georgiascanner.live:1883` | Bare-metal MQTT broker for trunk-recorder nodes |
+| ThinLine Radio | `https://thinline.georgiascanner.live` | Primary scanner playback, users, alerts |
+| TG Manager | `https://tgmanager.georgiascanner.live` | ThinLine talkgroup management UI |
+| tr-engine | `https://trengine.georgiascanner.live` | Analytics/API backend consuming the MQTT stream |
+| tr-dashboard | `https://trdash.georgiascanner.live` | Real-time monitoring dashboard backed by tr-engine |
+| RDIO Scanner | Docker legacy service | Compatibility service, not the primary ingest path |
+| Uptime Kuma | `https://uptime.georgiascanner.live` | Health checks and node push monitors |
+| AutoKuma | internal | Creates Kuma monitors from Docker labels |
+| Dashy | `https://home.georgiascanner.live` | Service homepage |
+| Traefik | `https://traefik.georgiascanner.live` | Reverse proxy dashboard |
+| Cloudflared | internal | Cloudflare tunnel to Traefik |
+| Dozzle | `:8080` / admin access | Docker logs |
 
-- **System Overview** - Total transmissions, active nodes, call distribution
-- **Node Performance** - Per-node transmission rates, recorder status, call duration
-- **Talkgroup Analytics** - Top talkgroups, activity heatmaps, group breakdowns
-- **Uptime Kuma Monitors** - Node health, response times, uptime percentages
+See [VPS Architecture](docs/vps-architecture.md) for deployment paths, Docker networks, and routing details.
 
-Each node sends metrics via MQTT which are collected by Telegraf and stored in InfluxDB for visualization.
+## Supported Counties
 
-## Supported Counties (SEGARRN)
+All counties are part of the Southeast Georgia Regional Radio Network (SEGARRN) P25 system.
 
-All counties are part of the [Southeast Georgia Regional Radio Network (SEGARRN)](https://www.radioreference.com/db/sid/6694) P25 system.
+| County | Short Name | Major City | Bootstrap Status |
+|--------|------------|------------|------------------|
+| Chatham | `chatham` | Savannah | Active |
+| Bryan | `bryan` | Richmond Hill | Ready |
+| Bulloch | `bulloch` | Statesboro | Ready |
+| Candler | `candler` | Metter | Ready |
+| Effingham | `effingham` | Springfield | Ready |
+| Emanuel | `emanuel` | Swainsboro | Ready |
+| Glynn | `glynn` | Brunswick | Ready |
+| Liberty | `liberty` | Hinesville | Ready |
+| Long | `long` | Ludowici | Ready |
+| McIntosh | `mcintosh` | Darien | Ready |
 
-| County | Short Name | Major City | Status |
-|--------|------------|------------|--------|
-| Chatham | chatham | Savannah | Active |
-| Bryan | bryan | Richmond Hill | Ready |
-| Bulloch | bulloch | Statesboro | Ready |
-| Candler | candler | Metter | Ready |
-| Effingham | effingham | Springfield | Ready |
-| Emanuel | emanuel | Swainsboro | Ready |
-| Glynn | glynn | Brunswick | Ready |
-| Liberty | liberty | Hinesville | Ready |
-| Long | long | Ludowici | Ready |
-| McIntosh | mcintosh | Darien | Ready |
+The county config files in `configs/<county>/system.conf` are bootstrap defaults. Verify control channels for the exact receiver location before starting a node.
 
 ## Prerequisites
 
-- Ubuntu 22.04 LTS (or 24.04)
-- SDR hardware connected (RTL-SDR, Airspy, HackRF, etc.)
+- Ubuntu 22.04 LTS or 24.04 LTS
+- SDR hardware connected to the node (RTL-SDR, Airspy, HackRF, etc.)
 - Internet connection
-- MQTT credentials (request from admin)
+- MQTT credentials from the GaScanner admin
+- Three Uptime Kuma push monitor tokens from the GaScanner admin
+- Talkgroup CSV for the county or system being monitored
 
 ## Quick Start
 
-### Option 1: Interactive Setup Script
-
 ```bash
-# Clone the repo
 git clone https://github.com/jodfie/gascanner-node-setup.git
 cd gascanner-node-setup
-
-# Run interactive setup
 sudo ./scripts/setup.sh
 ```
 
-### Option 2: Claude Code Setup
+The setup script asks for the county, hostname, MQTT credentials, SDR type, control channels, and three Uptime Kuma push tokens.
 
-If you have Claude Code installed:
+## What The Bootstrap Does
 
-```bash
-# Clone the repo
-git clone https://github.com/jodfie/gascanner-node-setup.git
-cd gascanner-node-setup
+1. Installs node dependencies, Docker, SDR tools, and udev rules.
+2. Blacklists DVB drivers that conflict with RTL-SDR devices.
+3. Creates `/home/<user>/trunk_recorder/`.
+4. Generates `docker-compose.yml` using `thegreatcodeholio/trunk-recorder-mqtt:RC5.0_organized`.
+5. Generates `tr_config/config.json` with the MQTT plugin enabled.
+6. Installs a one-minute heartbeat script for the three required Kuma push monitors.
+7. Creates a `trunk-recorder.service` systemd unit.
 
-# Run Claude Code and ask it to set up the node
-claude
+Generated node layout:
 
-# Then say: "Set up this server as a GAScanner trunk-recorder node for [COUNTY] county"
-```
-
-## What the Setup Does
-
-1. **System Updates** - Updates packages and installs dependencies
-2. **Docker Installation** - Installs Docker and Docker Compose
-3. **RadioReference Fetch** - Scrapes control channel frequencies from RadioReference
-4. **Trunk-Recorder Setup** - Pulls `thegreatcodeholio/trunk-recorder-mqtt:RC5.0_organized` image
-5. **SDR Configuration** - Configures udev rules for SDR hardware
-6. **MQTT Configuration** - Sets up connection to GAScanner VPS
-7. **Monitoring Setup** - Configures required Uptime Kuma heartbeat (sends status every minute)
-8. **Systemd Service** - Creates auto-start service
-
-## Configuration
-
-### Required Information
-
-You'll need to provide:
-- **County name** - One of the 10 SEGARRN counties
-- **RadioReference System ID** - The script will fetch control channels automatically
-- **MQTT credentials** (username/password from admin)
-- **SDR device info** (type, serial number if multiple)
-- **3 Uptime Kuma push tokens** (required for monitoring):
-  1. **Node System Monitor** - Reports node health every minute
-  2. **TR Container Monitor** - Reports trunk-recorder container status
-  3. **Transmissions Monitor** - Reports transmission activity (alerts if no audio in 30min)
-
-### Files from Admin
-
-Request these from the GAScanner admin:
-- **talkgroups.csv** - Talkgroup definitions for your county
-- **MQTT credentials** - Username and password for broker connection
-- **3 Uptime Kuma push tokens** - Create 3 push monitors at uptime.georgiascanner.live
-
-### Configuration Files
-
-After setup, your configuration will be in:
-```
+```text
 ~/trunk_recorder/
-├── docker-compose.yml      # Docker configuration
-├── tr_config/
-│   ├── config.json         # Main trunk-recorder config
-│   ├── talkgroups.csv      # Talkgroup definitions
-│   └── units.csv           # Unit ID definitions (optional)
-└── tr_audio/               # Temporary audio storage
+|-- docker-compose.yml
+|-- tr_config/
+|   |-- config.json
+|   |-- talkgroups.csv
+|   `-- units.csv
+|-- tr_audio/
+`-- tr_logs/
 ```
 
-## Manual Setup Steps
+## Required Admin Inputs
 
-If you prefer manual setup, see [docs/manual-setup.md](docs/manual-setup.md).
+Ask the GaScanner admin for:
 
-## Updating
+- MQTT username and password, usually following `tr_<county>`
+- Three Uptime Kuma push tokens:
+  - node/system heartbeat
+  - trunk-recorder container heartbeat
+  - transmission activity heartbeat
+- `talkgroups.csv` for the county or monitored system
+- Any site-specific control channel updates
 
-To update trunk-recorder:
+## Operations
+
+Start or update trunk-recorder:
 
 ```bash
 cd ~/trunk_recorder
@@ -157,56 +134,40 @@ docker compose pull
 docker compose up -d
 ```
 
-## Troubleshooting
+Check logs:
 
-### Check trunk-recorder logs
 ```bash
 docker logs -f trunk_recorder
 ```
 
-### Check MQTT connectivity
+Test MQTT from a node:
+
 ```bash
-# Test MQTT connection (from node)
 mosquitto_pub -h mqtt.georgiascanner.live -p 1883 \
   -u "tr_COUNTY" -P "YOUR_PASSWORD" \
-  -t "test" -m "hello"
+  -t "test/node" -m "hello"
 ```
 
-### Check SDR detection
-```bash
-# For RTL-SDR
-rtl_test
+## Documentation
 
-# For Airspy
-airspy_info
-```
+- [Manual Setup](docs/manual-setup.md)
+- [VPS Architecture](docs/vps-architecture.md)
+- [MQTT](docs/mqtt.md)
+- [Monitoring](docs/monitoring.md)
+- [Consolidation Notes](docs/consolidation-notes.md)
 
-### Verify audio is being sent
-Check the GAScanner VPS iCAD logs or Uptime Kuma for heartbeat activity.
+## Not In This Bootstrap
 
-## Hardware Recommendations
+The following are not part of node provisioning:
 
-### Entry Level
-- Raspberry Pi 4 (4GB+) or Intel NUC
-- RTL-SDR Blog V3 or V4
-- Outdoor antenna with LNA
+- Building or deploying `tr-engine`
+- Building or deploying `tr-dashboard`
+- Building or deploying `ThinLineRadio`
+- Managing live server secrets
+- Vendoring nested app repos into this bootstrap repo
 
-### Recommended
-- Intel NUC or Mini PC (i5+)
-- Airspy Mini or Airspy R2
-- Bandpass filter for your frequency range
-- Quality outdoor antenna
-
-### Multi-System
-- Full PC with multiple USB ports
-- Multiple SDRs (one per frequency range)
-- USB hub with external power
-
-## Support
-
-- **Issues**: Open a GitHub issue
-- **Admin Contact**: Request MQTT credentials and system configuration
+RDIO Scanner still exists on the VPS as a Docker legacy/compatibility service, but new trunk-recorder nodes should feed Mosquitto for ThinLine Radio and tr-engine.
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file
+MIT License - see [LICENSE](LICENSE).

@@ -1,108 +1,91 @@
-# Manual Setup Guide
+# Manual Node Setup
 
-If you prefer to set up your node manually instead of using the interactive script, follow these steps.
+Use this guide when you do not want to run `scripts/setup.sh`, or when you need to understand exactly what the bootstrap script creates.
 
 ## Prerequisites
 
 - Ubuntu 22.04 LTS or 24.04 LTS
 - Root/sudo access
-- SDR hardware (RTL-SDR, Airspy, HackRF)
-- Internet connection
+- SDR hardware connected to the node
+- MQTT credentials from the GaScanner admin
+- Three Uptime Kuma push monitor tokens from the GaScanner admin
+- `talkgroups.csv` for the county/system
 
-## Step 1: System Updates
-
-```bash
-sudo apt update && sudo apt upgrade -y
-```
-
-## Step 2: Install Dependencies
+## 1. Install Dependencies
 
 ```bash
+sudo apt update
 sudo apt install -y \
-    apt-transport-https \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    git \
-    jq \
-    htop \
-    tmux \
-    usbutils \
-    libusb-1.0-0-dev \
-    cmake \
-    build-essential
+  apt-transport-https ca-certificates curl gnupg lsb-release git jq htop tmux \
+  usbutils libusb-1.0-0-dev cmake build-essential bc \
+  rtl-sdr librtlsdr-dev sox libsox-fmt-all mosquitto-clients
 ```
 
-## Step 3: Install Docker
+## 2. Install Docker
 
 ```bash
-# Add Docker's official GPG key
 sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
 sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-# Add the repository
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Install Docker
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Add your user to docker group
-sudo usermod -aG docker $USER
+sudo usermod -aG docker "$USER"
 ```
 
-Log out and back in for group changes to take effect.
+Log out and back in so the Docker group membership applies.
 
-## Step 4: Install SDR Tools
-
-```bash
-sudo apt install -y rtl-sdr librtlsdr-dev sox libsox-fmt-all
-```
-
-### Create udev rules
+## 3. Configure SDR Access
 
 ```bash
-# RTL-SDR rules
 sudo tee /etc/udev/rules.d/20-rtlsdr.rules << 'EOF'
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0666", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0666", SYMLINK+="rtl_sdr"
 EOF
 
-# Airspy rules
 sudo tee /etc/udev/rules.d/52-airspy.rules << 'EOF'
 ATTR{idVendor}=="1d50", ATTR{idProduct}=="60a1", SYMLINK+="airspy-%k", MODE="660", GROUP="plugdev"
 EOF
 
-# Blacklist DVB drivers
 sudo tee /etc/modprobe.d/blacklist-rtlsdr.rules << 'EOF'
 blacklist dvb_usb_rtl28xxu
 blacklist rtl2832
 blacklist rtl2830
 EOF
 
-# Reload rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-## Step 5: Create Trunk-Recorder Directory Structure
+Verify an RTL-SDR:
+
+```bash
+rtl_test -t
+```
+
+## 4. Create Node Directories
 
 ```bash
 mkdir -p ~/trunk_recorder/{tr_config,tr_audio,tr_logs}
 cd ~/trunk_recorder
 ```
 
-## Step 6: Create docker-compose.yml
+Place the admin-provided talkgroup file at:
+
+```text
+~/trunk_recorder/tr_config/talkgroups.csv
+```
+
+## 5. Create Docker Compose
 
 ```bash
 cat > docker-compose.yml << 'EOF'
-version: "3.8"
-
 services:
   trunk-recorder:
     image: thegreatcodeholio/trunk-recorder-mqtt:RC5.0_organized
@@ -122,14 +105,9 @@ services:
 EOF
 ```
 
-## Step 7: Create config.json
+## 6. Create trunk-recorder Config
 
-Contact the GAScanner admin to get:
-- Your MQTT credentials (username/password)
-- Control channel frequencies for your county
-- Talkgroups CSV file
-
-Create your config:
+Replace placeholders before starting the container.
 
 ```bash
 cat > tr_config/config.json << 'EOF'
@@ -162,7 +140,7 @@ cat > tr_config/config.json << 'EOF'
     {
       "name": "MQTT Status",
       "library": "/usr/local/lib/trunk-recorder/libmqtt_status_plugin.so",
-      "broker": "tcp://VPS_IP_OR_HOSTNAME:1883",
+      "broker": "tcp://mqtt.georgiascanner.live:1883",
       "topic": "trunk_recorder/feeds",
       "unit_topic": "trunk_recorder/units",
       "username": "YOUR_MQTT_USER",
@@ -181,43 +159,37 @@ cat > tr_config/config.json << 'EOF'
 EOF
 ```
 
-**Important**: Replace:
-- `YOUR_COUNTY` with your county name (e.g., chatham, bryan)
-- `VPS_IP_OR_HOSTNAME` with the VPS IP address or hostname provided by the admin (the Mosquitto broker runs on port 1883 with authentication required)
-- `YOUR_MQTT_USER` and `YOUR_MQTT_PASSWORD` with credentials from admin
-- Control channel frequencies with correct values for your area
+Key fields to verify:
 
-**ThinLine Radio HTTP upload (optional)**: In addition to MQTT, ThinLine Radio accepts direct HTTP uploads via `POST /api/call-upload`. Add an `uploadScript` to your systems block pointing to a shell script that posts audio + metadata. Contact the admin for the API key. MQTT is the primary and recommended transport.
+| Field | What to set |
+|-------|-------------|
+| `instanceId` | County or node ID, for example `chatham` |
+| `sources[].center` | SDR center frequency in Hz |
+| `sources[].gain` | SDR gain; tune for decode rate |
+| `systems[].control_channels` | Correct control channels for the receiver location |
+| `systems[].shortName` | County/system short name |
+| `plugins[].username` | MQTT user from admin |
+| `plugins[].password` | MQTT password from admin |
 
-## Step 8: Add Talkgroups File
+`message_topic` is intentionally omitted by default because trunking messages can be very high volume. Add it only if the admin requests trunking message ingestion.
 
-Request `talkgroups.csv` from the GAScanner admin and place it in:
-```
-~/trunk_recorder/tr_config/talkgroups.csv
-```
-
-## Step 9: Test SDR Hardware
+## 7. Test MQTT
 
 ```bash
-# Test RTL-SDR
-rtl_test -t
-
-# You should see your device detected
+mosquitto_pub -h mqtt.georgiascanner.live -p 1883 \
+  -u "YOUR_MQTT_USER" -P "YOUR_MQTT_PASSWORD" \
+  -t "test/node" -m "hello"
 ```
 
-## Step 10: Start Trunk-Recorder
+## 8. Start trunk-recorder
 
 ```bash
 cd ~/trunk_recorder
 docker compose up -d
-
-# Check logs
 docker logs -f trunk_recorder
 ```
 
-## Step 11: Create Systemd Service (Optional)
-
-For automatic startup:
+## 9. Optional systemd Service
 
 ```bash
 sudo tee /etc/systemd/system/trunk-recorder.service << EOF
@@ -244,35 +216,35 @@ sudo systemctl enable trunk-recorder
 sudo systemctl start trunk-recorder
 ```
 
+## 10. Monitoring
+
+The standard bootstrap also installs `/usr/local/bin/gascanner-heartbeat.sh` and runs it every minute. If setting up manually, either run `scripts/setup.sh` for the monitoring portion or recreate the three push checks described in [Monitoring](monitoring.md).
+
 ## Troubleshooting
 
-### SDR Not Detected
+Check SDR hardware:
 
-1. Check USB connection: `lsusb`
-2. Check kernel driver not loaded: `lsmod | grep dvb`
-3. If DVB driver loaded, unload it: `sudo rmmod dvb_usb_rtl28xxu`
-
-### No Audio Being Sent
-
-1. Check trunk-recorder logs: `docker logs trunk_recorder`
-2. Verify control channel frequencies are correct
-3. Check MQTT connectivity with mosquitto_pub test (see README)
-4. Verify credentials with admin
-5. Check [ThinLine Radio](https://thinline.georgiascanner.live) for recent calls from your county
-6. Check [TR Dashboard](https://trdash.georgiascanner.live) for real-time call activity and any ingest errors
-7. Confirm Uptime Kuma heartbeat monitors are checking in at [uptime.georgiascanner.live](https://uptime.georgiascanner.live)
-
-### Docker Permission Denied
-
-Log out and back in after adding user to docker group, or run:
 ```bash
-newgrp docker
+lsusb
+rtl_test -t
+lsmod | grep -E 'dvb|rtl28'
 ```
 
-## Support
+Check trunk-recorder:
 
-Contact the GAScanner admin for:
-- MQTT credentials
-- Talkgroups files
-- Control channel frequencies
-- Uptime Kuma push tokens
+```bash
+docker ps --filter name=trunk_recorder
+docker logs --since 10m trunk_recorder
+```
+
+Check recent audio:
+
+```bash
+find ~/trunk_recorder/tr_audio -type f -name "*.wav" -mmin -10
+```
+
+Check MQTT reachability:
+
+```bash
+nc -zv mqtt.georgiascanner.live 1883
+```

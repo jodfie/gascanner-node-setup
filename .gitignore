@@ -30,5 +30,13 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Local nested application checkouts (not part of this bootstrap repo)
+tr-engine/
+tr-dashboard/
+
+# Generated node runtime directories
+trunk_recorder/
+gascanner-node/
+
 # Local audit scripts (keep off remote)
 scripts/audit/
