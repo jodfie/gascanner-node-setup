@@ -154,7 +154,6 @@ mosquitto_pub -h mqtt.georgiascanner.live -p 1883 \
 - [VPS Architecture](docs/vps-architecture.md)
 - [MQTT](docs/mqtt.md)
 - [Monitoring](docs/monitoring.md)
-- [Consolidation Notes](docs/consolidation-notes.md)
 
 ## Not In This Bootstrap
 
